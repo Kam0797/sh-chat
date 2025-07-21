@@ -29,3 +29,28 @@ const userSchema = mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 export {User};
+
+const chatIdSchema = mongoose.Schema({
+  chatId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  chatName: {
+    type: String
+  },
+  members: {
+    type: Array,
+    required: true
+  },
+  admin: {
+    type: String,
+    required: true
+  },
+  mods: {
+    type: Array
+  }
+});
+
+const ChatId = mongoose.model('ChatId', chatIdSchema);
+export { ChatId };

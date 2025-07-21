@@ -1,7 +1,9 @@
 
 const nicknameMap = new Map();
 const uemailMap = new Map();
-import { User } from '../models/User.js'
+
+const chatIdMap = new Map();
+import { User, ChatId } from '../models/User.js'
 
 async function loadNicknameMap() {
   const nicknames = await User.find({},'_id uemail nickname').lean();
@@ -16,5 +18,13 @@ async function loadNicknameMap() {
 
 loadNicknameMap().catch(err => console.error('Error loading nicknameMap/uemailMap', err));
 
+async function loadChatIdMap() {
+  const chatIds = await ChatId.find({}, 'chatId members').lean();
 
-export { nicknameMap, uemailMap, loadNicknameMap }
+  chatIds.forEach(chatId => {
+    chatIdMap.set(chatId.chatId,chatId.members);
+  });
+  console.log('chats on cache:', chatIdMap.size)
+}
+
+export { nicknameMap, uemailMap, chatIdMap, loadNicknameMap, loadChatIdMap }
