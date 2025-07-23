@@ -11,11 +11,14 @@ import cors from 'cors'
 
 
 
-import { ChatId, User, chatId } from './models/User.js'
+import { ChatId, User } from './models/User.js'
 import { issuedAtMap, loadIssuedAtMap } from './cache/issuedAtCache.js';
 import { nicknameMap, uemailMap, chatIdMap, loadNicknameMap, loadChatIdMap } from './cache/nicknameCache.js';
 
 const app = express();
+
+let THE_MESS = new Map();
+let SORTED_MESS = new Map();
 
 // mongoose part
 
@@ -56,7 +59,7 @@ async function addUser(userData) {
 function authMiddleWare(req,res,next) {
   const token = req.cookies.token;
 
-  if (!token) return res.status(401).json({code:0, codeMsg: 'not signed in'});
+  if (!token) {console.log('no tok',req.cookies); return res.status(401).json({code:0, codeMsg: 'not signed in'})};
 
   jwt.verify(token, process.env.JWT_SECRET_KEY, (err, userData) => {
     const issuedAt = issuedAtMap.get(userData._id);
@@ -208,14 +211,17 @@ app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
 })
 
 app.post('/chat/new', authMiddleWare, async(req,res)=> {
-  if(Array.isArray(req.body.members)) return res.json({code:0, codeMsg: 'invalid request'});
+  console.log('ch create func');
+  if(!Array.isArray(req.body.members)) return res.json({code:0, codeMsg: 'invalid request'});
   const chatId = req.user._id+Date.now().toString();
-  const hasUnknown = req.members.some(member=> !uemailMap.has(member))
+  const hasUnknown = req.body.members.some(member=> !uemailMap.has(member))
 
   if (hasUnknown) {
     return res.json({code: 0, codeMsg: 'unknown memeber in list' })
   } 
-  // bug, check and include creators name in members -
+
+  const members = Array.from(new Set([...req.body.members, req.user.uemail]))
+  // bug, check and include creators name in members -const members = Array.from(new Set([...req.body.members, req.user.uemail]));  
   const newChatId = {
     chatId: chatId,
     chatName: '',
@@ -226,7 +232,7 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
   try {
     await ChatId.create(newChatId);
     loadChatIdMap();
-    res.json({code:1, codeMsg: 'chat created', members: req.body.members})
+    res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: req.body.members})
   }
   catch (err) {
     console.log('error::chatId/new::', err);
@@ -234,6 +240,41 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
   }
 })
 
+app.post('/messages', authMiddleWare, (req, res)=> {
+  console.log("fooo",typeof messages, messages);
+  const messages = req.body.messages;
+  if (!Array.isArray(messages)) res.json({code:0, codeMsg: "malformed req, messages should be array"})
+  const isMalformed = messages.some(messageObj => {
+    return (!('chatId' in messageObj) ||
+      !('content' in messageObj) ||
+      !chatIdMap.has(messageObj.chatId) ||
+      !chatIdMap.get(messageObj.chatId).includes(req.user.uemail) ||
+      /[\s]+/.test(messageObj.content) 
+    );
+  });
+
+  if(isMalformed)  {
+      res.json({code:0, codeMsg: 'malformed request'});
+    }
+  messages.forEach(message => {
+    const timeStamp = Date.now();
+    const mes_uid = req.user._id + timeStamp + Math.random()* 1000;
+    THE_MESS.set(mes_uid , message);
+
+    message.timestamp = timeStamp;
+    message.members.forEach(member => {
+      if(!SORTED_MESS.has(member)) {
+        SORTED_MESS.set(member,[]);
+      }
+      SORTED_MESS.member.push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
+    })
+  })
+  res.json({code:1, codeMsg: 'messages accepted'})
+})
+
+app.get('/messages', authMiddleWare, (req, res) => { // too brave?
+  res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.req.user._id})
+})
 
 app.get('/chat-room', authMiddleWare, (req,res) => {
   const nickname = nicknameMap.get(req.user._id) || req.user.uemail;
