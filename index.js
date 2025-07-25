@@ -19,6 +19,7 @@ const app = express();
 
 let THE_MESS = new Map();
 let SORTED_MESS = new Map();
+let MESS_TRACKER = new Map();
 
 // mongoose part
 
@@ -86,6 +87,7 @@ function authMiddleWare(req,res,next) {
     console.log('connected to mongodb');
     await loadIssuedAtMap();
     await loadNicknameMap();
+    await loadChatIdMap();
     console.log('caches loaded');
   }
   catch (err) {
@@ -128,8 +130,8 @@ app.post('/auth/signup', async (req,res)=> {
     const result = await addUser(userData);
     if(result && result.code != 'ougl') {
   console.log("new user added: ",req.body.uemail," :: ", userData.name);
-    loadIssuedAtMap(); loadNicknameMap();
-    res.json({
+    loadIssuedAtMap(); loadNicknameMap(); 
+      res.json({
       code:1, 
       codeMsg: 'Signup success, go to login'
     });
@@ -213,7 +215,7 @@ app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
 app.post('/chat/new', authMiddleWare, async(req,res)=> {
   console.log('ch create func');
   if(!Array.isArray(req.body.members)) return res.json({code:0, codeMsg: 'invalid request'});
-  const chatId = req.user._id+Date.now().toString();
+  const chatId = req.user._id+Date.now().toString(); //toString needed?
   const hasUnknown = req.body.members.some(member=> !uemailMap.has(member))
 
   if (hasUnknown) {
@@ -225,14 +227,14 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
   const newChatId = {
     chatId: chatId,
     chatName: '',
-    members: req.body.members,
+    members: members, // make this into map
     admin: req.user.uemail,
     mods: []
   }
   try {
     await ChatId.create(newChatId);
     loadChatIdMap();
-    res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: req.body.members})
+    res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: members})
   }
   catch (err) {
     console.log('error::chatId/new::', err);
@@ -241,10 +243,17 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
 })
 
 app.post('/messages', authMiddleWare, (req, res)=> {
-  console.log("fooo",typeof messages, messages);
-  const messages = req.body.messages;
-  if (!Array.isArray(messages)) res.json({code:0, codeMsg: "malformed req, messages should be array"})
+  const messages = req.body.messages
+  // console.log("fooo",typeof messages, messages);
+  if (!Array.isArray(messages)) return res.json({code:0, codeMsg: "malformed req, messages should be array"})
   const isMalformed = messages.some(messageObj => {
+    // console.log("0",chatIdMap,req.user.uemail, typeof chatIdMap.get(messageObj.chatId), messageObj.chatId)
+    // console.log("1",!('chatId' in messageObj));
+    // console.log("2",!('content' in messageObj));
+    // console.log("3",!(chatIdMap.has(messageObj.chatId)));
+    // console.log("4",!(chatIdMap.get(messageObj.chatId).includes(req.user.uemail)));
+    // console.log("5",/[\s]+/.test(messageObj.content));
+    // console.log(JSON.stringify(chatIdMap.get(messageObj.chatId),null, 1))
     return (!('chatId' in messageObj) ||
       !('content' in messageObj) ||
       !chatIdMap.has(messageObj.chatId) ||
@@ -254,7 +263,8 @@ app.post('/messages', authMiddleWare, (req, res)=> {
   });
 
   if(isMalformed)  {
-      res.json({code:0, codeMsg: 'malformed request'});
+    console.error('malformed req l258')
+      return res.json({code:0, codeMsg: 'malformed request'});
     }
   messages.forEach(message => {
     const timeStamp = Date.now();
@@ -262,18 +272,40 @@ app.post('/messages', authMiddleWare, (req, res)=> {
     THE_MESS.set(mes_uid , message);
 
     message.timestamp = timeStamp;
-    message.members.forEach(member => {
-      if(!SORTED_MESS.has(member)) {
-        SORTED_MESS.set(member,[]);
+    message.s_uid = mes_uid;
+    console.log(chatIdMap,'mes:', message);
+    const members = chatIdMap.get(message.chatId);
+    console.log('mem',members);
+      members.forEach(member => {
+      if(member != req.user.uemail) {
+        if(!SORTED_MESS.has(member)) {
+          SORTED_MESS.set(member,[]);
+        }
+        if(!MESS_TRACKER.has(message.s_uid)) {
+          MESS_TRACKER.set(message.s_uid,new Set());
+        }
+        SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
+
+        /* if(!MESS_TRACKER.get(message).has(member)) */ MESS_TRACKER.get(message.s_uid).add(member);  // if used to technical efficiency -that conditional can be dropped safely if u like to do so
       }
-      SORTED_MESS.member.push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
     })
   })
   res.json({code:1, codeMsg: 'messages accepted'})
 })
 
 app.get('/messages', authMiddleWare, (req, res) => { // too brave?
-  res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.req.user._id})
+  res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(req.user._id) || []}) // to return [] instead of null
+  //clearing up
+  const member = req.user.uemail;
+  MESS_TRACKER.forEach((mess,key) => {
+     // if (mess.has(member)) {
+       mess.delete(member)
+     // }
+       if(!mess.size) {
+         THE_MESS.delete(key)
+       }
+  })
+
 })
 
 app.get('/chat-room', authMiddleWare, (req,res) => {
@@ -285,6 +317,13 @@ app.get('/auth/logout', authMiddleWare, (req, res)=> {
   res.clearCookie('token');
   res.status(200).json({code:1, codeMsg: 'logged out'});
 })
+
+
+// keeping for later
+// app.use((err, req, res, next)=> {
+//   console.error(err.stack);
+//   res.status(500).json({code:0, codeMsg: 'server error'})
+// })
 
 app.listen(3000, ()=> {
   console.log('server running at http://127.0.0.1:3000');

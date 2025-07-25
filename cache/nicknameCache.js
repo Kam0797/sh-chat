@@ -32,7 +32,7 @@ async function loadChatIdMap() {
     newMap.set(chatId.chatId,chatId.members);
   });
   chatIdMap = newMap;
-  console.log('chats on cache:', chatIdMap.size)
+  console.log('chatids on cache:', chatIdMap.size)
 }
 
 export { nicknameMap, uemailMap, chatIdMap, loadNicknameMap, loadChatIdMap }
