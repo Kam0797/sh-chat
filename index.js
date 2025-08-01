@@ -1,4 +1,5 @@
 import express from 'express';
+import {createServer}  from 'http'
 // const bodyParser = imp('body-parser');
 import 'dotenv/config';
 import mongoose from 'mongoose';
@@ -8,6 +9,7 @@ import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
+import { Server } from 'socket.io'
 
 
 
@@ -68,7 +70,7 @@ function authMiddleWare(req,res,next) {
     else if(!issuedAt || issuedAt !== userData.issuedAt) return res.status(403).json({ code:0, codeMsg: 'unauthorised - invalid token'})
 
     req.user = userData;
-    console.log('CC:',req.user);
+    // console.log('CC:',req.user);
     // console.log('fg:',userData, req.user);
     // res.json({code: 'ok'})
     next();
@@ -94,6 +96,11 @@ function authMiddleWare(req,res,next) {
     console.error('mongoDB connect failed',err)
   }
 })();
+
+app.use((req, res, next)=> {
+  console.log('route',req.method,req.originalUrl);
+  next();
+})
 
 // console.log('map sizes:',issuedAtMap.size, nicknameMap.size);
 app.get('/', (req,res)=> {
@@ -242,71 +249,238 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
   }
 })
 
-app.post('/messages', authMiddleWare, (req, res)=> {
-  const messages = req.body.messages
-  // console.log("fooo",typeof messages, messages);
-  if (!Array.isArray(messages)) return res.json({code:0, codeMsg: "malformed req, messages should be array"})
-  const isMalformed = messages.some(messageObj => {
-    // console.log("0",chatIdMap,req.user.uemail, typeof chatIdMap.get(messageObj.chatId), messageObj.chatId)
-    // console.log("1",!('chatId' in messageObj));
-    // console.log("2",!('content' in messageObj));
-    // console.log("3",!(chatIdMap.has(messageObj.chatId)));
-    // console.log("4",!(chatIdMap.get(messageObj.chatId).includes(req.user.uemail)));
-    // console.log("5",/[\s]+/.test(messageObj.content));
-    // console.log(JSON.stringify(chatIdMap.get(messageObj.chatId),null, 1))
-    return (!('chatId' in messageObj) ||
+app.get('/chats', authMiddleWare, async (req, res)=> {
+  const chats = await ChatId.find({members: {$in: [req.user.uemail]}});
+  // console.log(chats);
+  return res.json({chats: Array.from(chats)})
+})
+
+// socket replacing POST /messages
+const server = createServer(app)
+const io = new Server(server, {
+  cors: {
+    origin: function(origin, callback) {
+    if(!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    }
+    else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+    credentials: true
+  }
+})
+
+const userSocketMap = new Map();
+
+io.on('connection', (socket)=> {
+  // console.log('soc hsk',socket.handshake.headers.cookie, socket.id);
+  //
+  // auth area. move this to middleware later
+  const tokenHeader = socket.handshake.headers.cookie || '';
+  const token = tokenHeader.match(/(?:^;|\s*)token=([^;]*)/)?.[1];
+  // console.log('tok:',token);
+  if(!token) {
+    console.log(socket.id, ' : no token');
+    socket.disconnect(true);
+  }
+  try {
+  const userData = jwt.verify(token, process.env.JWT_SECRET_KEY);
+    const validIssuedAt = issuedAtMap.get(userData._id);
+  if(!validIssuedAt || userData.issuedAt !== validIssuedAt) {
+    console.log(socket.id, ' : Invalid token -IA');
+    socket.disconnect(true);
+  }
+  socket.user = userData;
+  userSocketMap.set(socket.user.uemail,socket.id);
+  pushMessagesToClient();
+  console.log(`${socket.user.uemail} connected`);
+  }
+  catch (err) {
+    console.log(socket.id, ' : Invalid token');
+    socket.disconnect(true)
+  } // auth end
+  
+  socket.on('messagesToServer', (messages) => {
+    if (!Array.isArray(messages) || !messages) {
+      socket.emit('messagesToServer', {code:0, codeMsg: 'Malformed req, should be array'});
+      return;
+    }
+    console.log('socMes:', messages);
+    const isMalformed = messages.some(messageObj => {
+      return (!('chatId' in messageObj) ||
       !('content' in messageObj) ||
       !chatIdMap.has(messageObj.chatId) ||
-      !chatIdMap.get(messageObj.chatId).includes(req.user.uemail) ||
-      /[\s]+/.test(messageObj.content) 
-    );
-  });
-
-  if(isMalformed)  {
-    console.error('malformed req l258')
-      return res.json({code:0, codeMsg: 'malformed request'});
+        !chatIdMap.get(messageObj.chatId).includes(socket.user.uemail) ||
+        messageObj.content.trim() == ''
+      );
+    });
+    
+    if (isMalformed) {
+      console.log('malformed req l316');
+      socket.emit('messagesToServer', {code:0, codeMsg: 'malformed req l316'});
+      return;
     }
-  messages.forEach(message => {
-    const timeStamp = Date.now();
-    const mes_uid = req.user._id + timeStamp + Math.random()* 1000;
-    THE_MESS.set(mes_uid , message);
+    messages.forEach(message => {
+      const timeStamp = Date.now();
+      const mes_uid = socket.user._id + timeStamp + Math.floor(Math.random()*1000);
 
-    message.timestamp = timeStamp;
-    message.s_uid = mes_uid;
-    console.log(chatIdMap,'mes:', message);
-    const members = chatIdMap.get(message.chatId);
-    console.log('mem',members);
+      message.timestamp = timeStamp;
+      message.s_uid = mes_uid;
+      message.sendPending = 0;
+
+      THE_MESS.set(mes_uid, message);
+
+      const members = chatIdMap.get(message.chatId);
       members.forEach(member => {
-      if(member != req.user.uemail) {
-        if(!SORTED_MESS.has(member)) {
-          SORTED_MESS.set(member,[]);
-        }
-        if(!MESS_TRACKER.has(message.s_uid)) {
-          MESS_TRACKER.set(message.s_uid,new Set());
-        }
-        SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
+        if(member != socket.user.uemail) {
+          if(!SORTED_MESS.has(member)) {
+            SORTED_MESS.set(member, []);
+          }
+          if(!MESS_TRACKER.has(message.s_uid)) {
+            MESS_TRACKER.set(message.s_uid, new Set());
+          }
+          SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));
 
-        /* if(!MESS_TRACKER.get(message).has(member)) */ MESS_TRACKER.get(message.s_uid).add(member);  // if used to technical efficiency -that conditional can be dropped safely if u like to do so
-      }
+          MESS_TRACKER.get(message.s_uid).add(member);
+        }
+      })
     })
+    socket.emit('messagesToServer',{code:1, codeMsg: 'messages accepted'});
+    pushMessagesToClient();
+    return;
   })
-  res.json({code:1, codeMsg: 'messages accepted'})
+  
+  // function messagesToClientFunc(socket) {
+  //   try{
+  //     socket.emit('messagesToClient',{code: 1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(socket.user.uemail || [])});
+  //
+  //     // clearing up
+  //     const member = socket.user.uemail; // you cant do this
+  //     MESS_TRACKER.forEach((mess, key)=> {
+  //       mess.delete(member)
+  //       if(!mess.size) {
+  //         THE_MESS.delete(key)
+  //       }
+  //     })
+  //   }
+  //   catch (err) {
+  //     console.log('error sending msgs to client')
+  //   }
+  // }
+
+
+  socket.on('disconnect', ()=>{
+    userSocketMap.delete(socket.user.uemail);
+    console.log(`${socket.user.uemail} disconnected`);
+  })
+  
 })
 
-app.get('/messages', authMiddleWare, (req, res) => { // too brave?
-  res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(req.user._id) || []}) // to return [] instead of null
-  //clearing up
-  const member = req.user.uemail;
-  MESS_TRACKER.forEach((mess,key) => {
-     // if (mess.has(member)) {
-       mess.delete(member)
-     // }
-       if(!mess.size) {
-         THE_MESS.delete(key)
-       }
-  })
+function pushMessagesToClient() {
+  userSocketMap.forEach((socketId,uemail)=> {
+    try {
+      if(SORTED_MESS.has(uemail)) {
+        io.to(socketId).emit('messagesToClient',SORTED_MESS.get(uemail));
+        SORTED_MESS.delete(uemail);
+        console.log('sent and deleted record in SORTED_MESS for ', uemail);
 
+        // clearing up ?
+        const member = uemail;
+        MESS_TRACKER.forEach((mess, key)=> {
+          mess.delete(member);
+          if(!mess.size) {
+            THE_MESS.delete(key);
+          }
+        })
+      }
+    }
+    catch(err) {
+    console.log('error on sending:', err)
+    }
+
+  })
+}
+
+
+server.listen(3000, ()=> {
+  console.log('sock server running')
 })
+
+
+
+
+
+// app.post('/messages', authMiddleWare, (req, res)=> {
+//   console.log('mes# ',req.body.messages);
+//   const messages = req.body.messages
+//   // console.log("fooo",typeof messages, messages);
+//   if (!Array.isArray(messages)) return res.json({code:0, codeMsg: "malformed req, messages should be array"})
+//   const isMalformed = messages.some(messageObj => {
+//     // console.log("0",chatIdMap,req.user.uemail, typeof chatIdMap.get(messageObj.chatId), messageObj.chatId)
+//     // console.log("1",!('chatId' in messageObj));
+//     // console.log("2",!('content' in messageObj));
+//     // console.log("3",!(chatIdMap.has(messageObj.chatId)));
+//     // console.log("4",!(chatIdMap.get(messageObj.chatId).includes(req.user.uemail)));
+//     // console.log("5",(messageObj.content.trim() == ''),messageObj.content);
+//     // console.log(JSON.stringify(chatIdMap.get(messageObj.chatId),null, 1))
+//     return (!('chatId' in messageObj) ||
+//       !('content' in messageObj) ||
+//       !chatIdMap.has(messageObj.chatId) ||
+//       !chatIdMap.get(messageObj.chatId).includes(req.user.uemail) ||
+//       // /[\s]+/.test(messageObj.content) 
+//       messageObj.content.trim() == ''
+//     );
+//   });
+//   
+//   if(isMalformed)  {
+//     console.error('malformed req l258')
+//       return res.json({code:0, codeMsg: 'malformed request'});
+//     }
+//   messages.forEach(message => {
+//     const timeStamp = Date.now();
+//     const mes_uid = req.user._id + timeStamp + Math.floor(Math.random()* 1000);
+//     THE_MESS.set(mes_uid , message);
+//
+//     message.timestamp = timeStamp;
+//     message.s_uid = mes_uid;
+//     // console.log('mes:', message); // chatId
+//     const members = chatIdMap.get(message.chatId);
+//     // console.log('mem',members);
+//       members.forEach(member => {
+//       if(member != req.user.uemail) {
+//         if(!SORTED_MESS.has(member)) {
+//           SORTED_MESS.set(member,[]);
+//         }
+//         if(!MESS_TRACKER.has(message.s_uid)) {
+//           MESS_TRACKER.set(message.s_uid,new Set());
+//         }
+//         SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
+//
+//         /* if(!MESS_TRACKER.get(message).has(member)) */ MESS_TRACKER.get(message.s_uid).add(member);  // if used to technical efficiency -that conditional can be dropped safely if u like to do so
+//       }
+//     })
+//   })
+//   res.json({code:1, codeMsg: 'messages accepted'})
+// })
+
+// app.get('/messages', authMiddleWare, (req, res) => { // too brave?
+//   res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(req.user.uemail) || []}) // to return [] instead of null
+//   SORTED_MESS.delete(req.user.uemail);
+//   //clearing up
+//   const member = req.user.uemail;
+//   MESS_TRACKER.forEach((mess,key) => {
+//      // if (mess.has(member)) {
+//        mess.delete(member)
+//      // }
+//        if(!mess.size) {
+//          THE_MESS.delete(key)
+//        }
+//   })
+//
+// })
+
+
 
 app.get('/chat-room', authMiddleWare, (req,res) => {
   const nickname = nicknameMap.get(req.user._id) || req.user.uemail;
@@ -317,6 +491,7 @@ app.get('/auth/logout', authMiddleWare, (req, res)=> {
   res.clearCookie('token');
   res.status(200).json({code:1, codeMsg: 'logged out'});
 })
+
 
 
 // keeping for later

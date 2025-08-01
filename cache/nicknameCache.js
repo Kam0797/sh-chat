@@ -1,8 +1,8 @@
 
-let nicknameMap = new Map();
-let uemailMap = new Map();
+let nicknameMap = new Map();  // {_id,nickname}
+let uemailMap = new Map();   // {uemail, nickename}
 
-let chatIdMap = new Map();
+let chatIdMap = new Map();  // {chatId, [members]}
 import { User, ChatId } from '../models/User.js'
 
 async function loadNicknameMap() {
