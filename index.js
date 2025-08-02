@@ -1,9 +1,8 @@
 import express from 'express';
 import {createServer}  from 'http'
-// const bodyParser = imp('body-parser');
+// const bodyParser = imp('body-parser');  // replaced by express.urlencoded *1
 import 'dotenv/config';
 import mongoose from 'mongoose';
-// dotenv.config();
 import validator from 'validator'
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
@@ -23,6 +22,24 @@ let THE_MESS = new Map();
 let SORTED_MESS = new Map();
 let MESS_TRACKER = new Map();
 
+const allowedOrigins = ['http://127.0.0.1:5500','https://Kam0797.github.io']
+
+app.use(express.urlencoded({extended:false}));  // *1
+app.use(cors({
+  origin: function(origin, callback) {
+    if(!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    }
+    else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+app.use(express.json());
+app.use(cookieParser());
+
+
 // mongoose part
 
 async function addUser(userData) {
@@ -31,7 +48,6 @@ async function addUser(userData) {
     if(uemailMap.get(userData.uemail)) return { code: 'ougl'};
     
     const pwHash = await bcrypt.hash(userData.pw1,12);
-    // userData.name = 'nick';
     const passedUserData = {
       uemail: userData.uemail,
       nickname: userData.name,
@@ -44,14 +60,8 @@ async function addUser(userData) {
     return newUser;
     }
     catch(err) {
-      // if(err.code == 11000) { //handled by cache
-      //   console.log('existing user', err.keyValue);
-      //   return {code: 'ougl'}
-      // }
-      // else {
       console.log('db error', err);
       return null;
-      // }
     }
   }
   else {
@@ -70,9 +80,6 @@ function authMiddleWare(req,res,next) {
     else if(!issuedAt || issuedAt !== userData.issuedAt) return res.status(403).json({ code:0, codeMsg: 'unauthorised - invalid token'})
 
     req.user = userData;
-    // console.log('CC:',req.user);
-    // console.log('fg:',userData, req.user);
-    // res.json({code: 'ok'})
     next();
   });
 }
@@ -102,27 +109,9 @@ app.use((req, res, next)=> {
   next();
 })
 
-// console.log('map sizes:',issuedAtMap.size, nicknameMap.size);
-app.get('/', (req,res)=> {
-  res.send('<h1>Hello sh-chat!</h1>') // exception to code-codeMsg convention
-});
-
-const allowedOrigins = ['http://127.0.0.1:5500','https://Kam0797.github.io']
-
-app.use(express.urlencoded({extended:false}));
-app.use(cors({
-  origin: function(origin, callback) {
-    if(!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    }
-    else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
-app.use(express.json());
-app.use(cookieParser());
+// app.get('/', (req,res)=> {
+//   res.send('<h1>Hello sh-chat!</h1>') // exception to code-codeMsg convention
+// });
 
 
 app.post('/auth/signup', async (req,res)=> {
@@ -131,7 +120,7 @@ app.post('/auth/signup', async (req,res)=> {
     uemail: req.body.uemail,
     pw1: req.body.pw1,
     pw2: req.body.pw2,
-    name: ""
+    name: req.body.uemail.split('@')[0]
   }
   try {
     const result = await addUser(userData);
@@ -143,11 +132,10 @@ app.post('/auth/signup', async (req,res)=> {
       codeMsg: 'Signup success, go to login'
     });
     }
-    else if(result.code == 'ougl') res.json({code: 'Existing user, go to login'})
+    else if(result.code == 'ougl') res.json({code:0, codeMsg: 'Existing user, go to login'})
   }
   catch (err) {
     console.log(err);
-    // if(err.code == 110000) res.json({code: 'Existing user, go to Login'});
     res.json({code:0, codeMsg: 'signup failed -maybe retry'});
   }
 });
@@ -173,7 +161,7 @@ app.post('/auth/login', async(req, res)=> {
     }, process.env.JWT_SECRET_KEY,
     { expiresIn: process.env.JWT_EXPIRY });
 
-    //samaSite seems to be changed
+    //sameSite seems to be changed
     res.cookie('token', token, {
       httpOnly: true,
       secure: false,
@@ -231,6 +219,7 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
 
   const members = Array.from(new Set([...req.body.members, req.user.uemail]))
   // bug, check and include creators name in members -const members = Array.from(new Set([...req.body.members, req.user.uemail]));  
+  // the above thing is fixed
   const newChatId = {
     chatId: chatId,
     chatName: '',
@@ -251,7 +240,6 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
 
 app.get('/chats', authMiddleWare, async (req, res)=> {
   const chats = await ChatId.find({members: {$in: [req.user.uemail]}});
-  // console.log(chats);
   return res.json({chats: Array.from(chats)})
 })
 
@@ -274,12 +262,9 @@ const io = new Server(server, {
 const userSocketMap = new Map();
 
 io.on('connection', (socket)=> {
-  // console.log('soc hsk',socket.handshake.headers.cookie, socket.id);
-  //
   // auth area. move this to middleware later
   const tokenHeader = socket.handshake.headers.cookie || '';
   const token = tokenHeader.match(/(?:^;|\s*)token=([^;]*)/)?.[1];
-  // console.log('tok:',token);
   if(!token) {
     console.log(socket.id, ' : no token');
     socket.disconnect(true);
@@ -294,7 +279,7 @@ io.on('connection', (socket)=> {
   socket.user = userData;
   userSocketMap.set(socket.user.uemail,socket.id);
   pushMessagesToClient();
-  console.log(`${socket.user.uemail} connected`);
+  console.log(`SOCK: ${socket.user.uemail} connected`);
   }
   catch (err) {
     console.log(socket.id, ' : Invalid token');
@@ -351,25 +336,6 @@ io.on('connection', (socket)=> {
     return;
   })
   
-  // function messagesToClientFunc(socket) {
-  //   try{
-  //     socket.emit('messagesToClient',{code: 1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(socket.user.uemail || [])});
-  //
-  //     // clearing up
-  //     const member = socket.user.uemail; // you cant do this
-  //     MESS_TRACKER.forEach((mess, key)=> {
-  //       mess.delete(member)
-  //       if(!mess.size) {
-  //         THE_MESS.delete(key)
-  //       }
-  //     })
-  //   }
-  //   catch (err) {
-  //     console.log('error sending msgs to client')
-  //   }
-  // }
-
-
   socket.on('disconnect', ()=>{
     userSocketMap.delete(socket.user.uemail);
     console.log(`${socket.user.uemail} disconnected`);
@@ -406,80 +372,6 @@ function pushMessagesToClient() {
 server.listen(3000, ()=> {
   console.log('sock server running')
 })
-
-
-
-
-
-// app.post('/messages', authMiddleWare, (req, res)=> {
-//   console.log('mes# ',req.body.messages);
-//   const messages = req.body.messages
-//   // console.log("fooo",typeof messages, messages);
-//   if (!Array.isArray(messages)) return res.json({code:0, codeMsg: "malformed req, messages should be array"})
-//   const isMalformed = messages.some(messageObj => {
-//     // console.log("0",chatIdMap,req.user.uemail, typeof chatIdMap.get(messageObj.chatId), messageObj.chatId)
-//     // console.log("1",!('chatId' in messageObj));
-//     // console.log("2",!('content' in messageObj));
-//     // console.log("3",!(chatIdMap.has(messageObj.chatId)));
-//     // console.log("4",!(chatIdMap.get(messageObj.chatId).includes(req.user.uemail)));
-//     // console.log("5",(messageObj.content.trim() == ''),messageObj.content);
-//     // console.log(JSON.stringify(chatIdMap.get(messageObj.chatId),null, 1))
-//     return (!('chatId' in messageObj) ||
-//       !('content' in messageObj) ||
-//       !chatIdMap.has(messageObj.chatId) ||
-//       !chatIdMap.get(messageObj.chatId).includes(req.user.uemail) ||
-//       // /[\s]+/.test(messageObj.content) 
-//       messageObj.content.trim() == ''
-//     );
-//   });
-//   
-//   if(isMalformed)  {
-//     console.error('malformed req l258')
-//       return res.json({code:0, codeMsg: 'malformed request'});
-//     }
-//   messages.forEach(message => {
-//     const timeStamp = Date.now();
-//     const mes_uid = req.user._id + timeStamp + Math.floor(Math.random()* 1000);
-//     THE_MESS.set(mes_uid , message);
-//
-//     message.timestamp = timeStamp;
-//     message.s_uid = mes_uid;
-//     // console.log('mes:', message); // chatId
-//     const members = chatIdMap.get(message.chatId);
-//     // console.log('mem',members);
-//       members.forEach(member => {
-//       if(member != req.user.uemail) {
-//         if(!SORTED_MESS.has(member)) {
-//           SORTED_MESS.set(member,[]);
-//         }
-//         if(!MESS_TRACKER.has(message.s_uid)) {
-//           MESS_TRACKER.set(message.s_uid,new Set());
-//         }
-//         SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));  // adding to fetch-centric map
-//
-//         /* if(!MESS_TRACKER.get(message).has(member)) */ MESS_TRACKER.get(message.s_uid).add(member);  // if used to technical efficiency -that conditional can be dropped safely if u like to do so
-//       }
-//     })
-//   })
-//   res.json({code:1, codeMsg: 'messages accepted'})
-// })
-
-// app.get('/messages', authMiddleWare, (req, res) => { // too brave?
-//   res.json({code:1, codeMsg: 'hey -take your mesgs', messages: SORTED_MESS.get(req.user.uemail) || []}) // to return [] instead of null
-//   SORTED_MESS.delete(req.user.uemail);
-//   //clearing up
-//   const member = req.user.uemail;
-//   MESS_TRACKER.forEach((mess,key) => {
-//      // if (mess.has(member)) {
-//        mess.delete(member)
-//      // }
-//        if(!mess.size) {
-//          THE_MESS.delete(key)
-//        }
-//   })
-//
-// })
-
 
 
 app.get('/chat-room', authMiddleWare, (req,res) => {
