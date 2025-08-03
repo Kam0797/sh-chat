@@ -22,7 +22,16 @@ let THE_MESS = new Map();
 let SORTED_MESS = new Map();
 let MESS_TRACKER = new Map();
 
+const PORT = process.env.PORT || 3000;
+const ENV = process.env.NODE_ENV || 'development';
+const isProduction = process.env.NODE_ENV == 'production';
+
+const host = ENV === 'production'
+  ? 'https://sh-chat.onrender.com'
+  : `http://127.0.0.1:${PORT}`;
+
 const allowedOrigins = ['http://127.0.0.1:5500','https://Kam0797.github.io']
+
 
 app.use(express.urlencoded({extended:false}));  // *1
 app.use(cors({
@@ -164,8 +173,8 @@ app.post('/auth/login', async(req, res)=> {
     //sameSite seems to be changed
     res.cookie('token', token, {
       httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
+      secure: isProduction,
+      sameSite: isProduction? 'None': 'Lax',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
     console.log(req.cookies);
@@ -209,7 +218,7 @@ app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
 
 app.post('/chat/new', authMiddleWare, async(req,res)=> {
   console.log('ch create func');
-  if(!Array.isArray(req.body.members)) return res.json({code:0, codeMsg: 'invalid request'});
+  if(!Array.isArray(req.body.members) || (req.body.members.length == 1 && req.body.members.includes(req.user.uemail)) || req.body.members.length == 0) return res.json({code:0, codeMsg: 'invalid request'});
   const chatId = req.user._id+Date.now().toString(); //toString needed?
   const hasUnknown = req.body.members.some(member=> !uemailMap.has(member))
 
@@ -218,23 +227,33 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
   } 
 
   const members = Array.from(new Set([...req.body.members, req.user.uemail]))
-  // bug, check and include creators name in members -const members = Array.from(new Set([...req.body.members, req.user.uemail]));  
-  // the above thing is fixed
+
+  if (members.length == 2) { // this is supposed to be addl handling on server. this situaton should be managed on client
+    const yourChatId = await ChatId.findOne({
+      members: {$all: [members[0],members[1]], $size:2 }
+    },{
+      chatId:1,
+    });
+    if (yourChatId) {
+      return res.json({code:2, codeMsg: 'chat exists',chatId: yourChatId.chatId })
+    }
+
+  }
   const newChatId = {
     chatId: chatId,
     chatName: '',
-    members: members, // make this into map
+    members: members, // make this into map - keeping as arr for now
     admin: req.user.uemail,
     mods: []
   }
   try {
     await ChatId.create(newChatId);
     loadChatIdMap();
-    res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: members})
+    return res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: members})
   }
   catch (err) {
     console.log('error::chatId/new::', err);
-    res.json({ code:0, codeMsg: 'failed, server error'})
+    return res.json({ code:0, codeMsg: 'failed, server error'})
   }
 })
 
@@ -259,35 +278,41 @@ const io = new Server(server, {
   }
 })
 
-const userSocketMap = new Map();
-
-io.on('connection', (socket)=> {
+io.use((socket, next)=> {
   // auth area. move this to middleware later
   const tokenHeader = socket.handshake.headers.cookie || '';
-  const token = tokenHeader.match(/(?:^;|\s*)token=([^;]*)/)?.[1];
+  const token = tokenHeader.match(/(?:^|;\s*)token=([^;]*)/)?.[1];
   if(!token) {
     console.log(socket.id, ' : no token');
     socket.disconnect(true);
+    return;
   }
   try {
-  const userData = jwt.verify(token, process.env.JWT_SECRET_KEY);
+    const userData = jwt.verify(token, process.env.JWT_SECRET_KEY);
     const validIssuedAt = issuedAtMap.get(userData._id);
-  if(!validIssuedAt || userData.issuedAt !== validIssuedAt) {
-    console.log(socket.id, ' : Invalid token -IA');
-    socket.disconnect(true);
-  }
-  socket.user = userData;
-  userSocketMap.set(socket.user.uemail,socket.id);
-  pushMessagesToClient();
-  console.log(`SOCK: ${socket.user.uemail} connected`);
+    if(!validIssuedAt || userData.issuedAt !== validIssuedAt) {
+      console.log(socket.id, ' : Invalid token -IA');
+      socket.disconnect(true);
+      return;
+    }
+    socket.user = userData;
+    userSocketMap.set(socket.user.uemail,socket.id);
+    pushMessagesToClient();
+    console.log(`SOCK: ${socket.user.uemail} connected`);
+    next();
   }
   catch (err) {
     console.log(socket.id, ' : Invalid token');
-    socket.disconnect(true)
+    socket.disconnect(true);
+    return;
   } // auth end
-  
+})
+
+const userSocketMap = new Map();
+
+io.on('connection', (socket)=>  { 
   socket.on('messagesToServer', (messages) => {
-    if (!Array.isArray(messages) || !messages) {
+    if (!Array.isArray(messages) || !messages.length ) {
       socket.emit('messagesToServer', {code:0, codeMsg: 'Malformed req, should be array'});
       return;
     }
@@ -392,6 +417,8 @@ app.get('/auth/logout', authMiddleWare, (req, res)=> {
 //   res.status(500).json({code:0, codeMsg: 'server error'})
 // })
 
+
+
 app.listen(3000, ()=> {
-  console.log('server running at http://127.0.0.1:3000');
+  console.log(`server running at ${host}`);
 })
