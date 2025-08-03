@@ -30,7 +30,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://127.0.0.1:${PORT}`;
 
-const allowedOrigins = ['http://127.0.0.1:5500','https://Kam0797.github.io']
+const allowedOrigins = ['http://127.0.0.1:5500','https://kam0797.github.io']
 
 
 app.use(express.urlencoded({extended:false}));  // *1
