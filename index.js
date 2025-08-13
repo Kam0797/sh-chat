@@ -28,9 +28,9 @@ const isProduction = process.env.NODE_ENV == 'production';
 
 const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
-  : `http://127.0.0.1:${PORT}`;
+  : `http://localhost:${PORT}`;
 
-const allowedOrigins = ['http://127.0.0.1:5500','https://kam0797.github.io']
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io'] //:5173 used for vite dev
 
 
 app.use(express.urlencoded({extended:false}));  // *1
@@ -178,7 +178,7 @@ app.post('/auth/login', async(req, res)=> {
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
     console.log(req.cookies);
-    res.json({code:1, codeMsg: 'auth success'})
+    res.json({code:1, codeMsg: 'auth success', uemail: user.uemail})
 
   }
   else {
@@ -258,8 +258,16 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
 })
 
 app.get('/chats', authMiddleWare, async (req, res)=> {
-  const chats = await ChatId.find({members: {$in: [req.user.uemail]}});
-  return res.json({chats: Array.from(chats)})
+  const chats = await ChatId.find({members: {$in: [req.user.uemail]}},{_id:0,__v:0});
+  return res.json({code: 1, chats: Array.from(chats)})
+})
+
+app.get('/user/exists', authMiddleWare, (req, res)=> { // req: uemail={uemail}
+  console.log('chk',req.query.uemail,validator.isEmail(req.query.uemail) , uemailMap.has(req.query.uemail)) 
+  if(validator.isEmail(req.query.uemail) && uemailMap.has(req.query.uemail)) {
+    return res.json({code: 1, uemail: req.query.uemail, codeMsg: 'user_exists'})
+  }
+  return res.json({code:0, uemail:null, codeMsg: 'non_existent_user'})
 })
 
 // socket replacing POST /messages
@@ -297,7 +305,7 @@ io.use((socket, next)=> {
     }
     socket.user = userData;
     userSocketMap.set(socket.user.uemail,socket.id);
-    pushMessagesToClient();
+    setTimeout(()=>pushMessagesToClient(),500);
     console.log(`SOCK: ${socket.user.uemail} connected`);
     next();
   }
@@ -338,6 +346,7 @@ io.on('connection', (socket)=>  {
       message.timestamp = timeStamp;
       message.s_uid = mes_uid;
       message.sendPending = 0;
+      message.sender = socket.user.uemail;
 
       THE_MESS.set(mes_uid, message);
 
