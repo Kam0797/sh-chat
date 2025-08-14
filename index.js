@@ -30,7 +30,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://localhost:${PORT}`;
 
-const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io'] //:5173 used for vite dev
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173'] //:5173 used for vite dev :4173 for vite preview
 
 
 app.use(express.urlencoded({extended:false}));  // *1
@@ -217,7 +217,7 @@ app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
 })
 
 app.post('/chat/new', authMiddleWare, async(req,res)=> {
-  console.log('ch create func');
+  console.log('create-chat...');
   if(!Array.isArray(req.body.members) || (req.body.members.length == 1 && req.body.members.includes(req.user.uemail)) || req.body.members.length == 0) return res.json({code:0, codeMsg: 'invalid request'});
   const chatId = req.user._id+Date.now().toString(); //toString needed?
   const hasUnknown = req.body.members.some(member=> !uemailMap.has(member))
@@ -235,21 +235,21 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
       chatId:1,
     });
     if (yourChatId) {
-      return res.json({code:2, codeMsg: 'chat exists',chatId: yourChatId.chatId })
+      return res.json({code:2, codeMsg: 'chat exists',chatId: yourChatId })
     }
 
   }
   const newChatId = {
     chatId: chatId,
     chatName: '',
-    members: members, // make this into map - keeping as arr for now
+    members: members, // make this into map - keeping as arr for no
     admin: req.user.uemail,
     mods: []
   }
   try {
     await ChatId.create(newChatId);
     loadChatIdMap();
-    return res.json({code:1, codeMsg: 'chat created',chatId: chatId, members: members})
+    return res.json({code:1, codeMsg: 'chat created', chatId: newChatId})
   }
   catch (err) {
     console.log('error::chatId/new::', err);
@@ -258,7 +258,10 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
 })
 
 app.get('/chats', authMiddleWare, async (req, res)=> {
-  const chats = await ChatId.find({members: {$in: [req.user.uemail]}},{_id:0,__v:0});
+  const chatId = req.query.chatId; // optional
+  const query = { chatId: chatId?ChatId:{$exists: true}, members: {$in: [req.user.uemail]} }
+  const chats = await ChatId.find(query, {_id:0,__v:0});
+  console.log('get-/chats',JSON.stringify(chats,null,1))
   return res.json({code: 1, chats: Array.from(chats)})
 })
 
