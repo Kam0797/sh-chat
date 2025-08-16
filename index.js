@@ -30,7 +30,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://localhost:${PORT}`;
 
-const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173'] //:5173 used for vite dev :4173 for vite preview
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.125.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
 
 
 app.use(express.urlencoded({extended:false}));  // *1
@@ -175,7 +175,8 @@ app.post('/auth/login', async(req, res)=> {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction? 'None': 'Lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      partitioned: isProduction
     });
     console.log(req.cookies);
     res.json({code:1, codeMsg: 'auth success', uemail: user.uemail})
