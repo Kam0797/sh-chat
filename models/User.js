@@ -49,6 +49,10 @@ const chatIdSchema = mongoose.Schema({
   },
   mods: {
     type: Array
+  },
+  type: {
+    type: String,
+    enum: ["direct", "group", "channel"]
   }
 });
 

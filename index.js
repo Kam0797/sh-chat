@@ -30,7 +30,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://localhost:${PORT}`;
 
-const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.125.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.60.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
 
 
 app.use(express.urlencoded({extended:false}));  // *1
@@ -179,7 +179,7 @@ app.post('/auth/login', async(req, res)=> {
       partitioned: isProduction
     });
     console.log(req.cookies);
-    res.json({code:1, codeMsg: 'auth success', uemail: user.uemail})
+    res.json({code:1, codeMsg: 'auth success', uemail: user.uemail, uid: user._id.toString()})
 
   }
   else {
@@ -194,7 +194,7 @@ app.post('/auth/login', async(req, res)=> {
 
 
 
-  app.get('/auth/status', (req,res)=> {
+  app.get('/auth/status', (req,res)=> {  // unprotected route /!\
     const token = req.cookies.token;
     if(!token) return res.json({code:0, codeMsg: 'unauthenticated'});
     try {
@@ -207,15 +207,45 @@ app.post('/auth/login', async(req, res)=> {
   })
 
 app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
+  let nickname = req.body.nickname;
+
+  if(!nickname || typeof nickname != 'string' ) {
+    return res.json({
+      code: 0,
+      codeMsg: 'Invalid Nickname'
+    });
+  }
+  nickname = nickname.trim();
+  if(nickname.length === 0 || nickname.length > 30) {
+    return res.json({
+      code: 0,
+      codeMsg: 'Nickname must be 1-30 chars'
+    })
+  }
+  // see if you have to restrict characters [with regex]
   try {
-    const nick = await User.updateOne({_id: req.user._id},{ $set: {nickname: req.body.nickname}}); // 'const nick = ' be taken out?
+    await User.updateOne({_id: req.user._id},{ $set: {nickname: req.body.nickname}}); // 'const nick = ' be taken out?
     loadNicknameMap();
-    res.json({code:1, codeMsg: `nickname changed to ${req.body.nickname}`})
+    return res.json({code:1, codeMsg: `nickname changed to ${req.body.nickname}`})
   }catch (err) {
     console.log('nickname update error:', err);
-    res.json({code:0, codeMsg: 'nickname update failed'})
+    return res.json({code:0, codeMsg: 'nickname update failed'})
   }
 })
+
+app.get('/profile', authMiddleWare, async(req, res)=> {
+  return res.json({
+    code:1,
+    codeMsg: 'get it',
+    profile: {
+      uid: req.user._id,
+      uemail: req.user.uemail,
+      nickname: nicknameMap.get(req.user._id) || req.user.uemail.split('@')[0],
+      profilePicURL: "" // to be impl-ed
+    }
+  })
+})
+
 
 app.post('/chat/new', authMiddleWare, async(req,res)=> {
   console.log('create-chat...');
@@ -269,9 +299,38 @@ app.get('/chats', authMiddleWare, async (req, res)=> {
 app.get('/user/exists', authMiddleWare, (req, res)=> { // req: uemail={uemail}
   console.log('chk',req.query.uemail,validator.isEmail(req.query.uemail) , uemailMap.has(req.query.uemail)) 
   if(validator.isEmail(req.query.uemail) && uemailMap.has(req.query.uemail)) {
-    return res.json({code: 1, uemail: req.query.uemail, codeMsg: 'user_exists'})
+    return res.json({code: 1, uemail: req.query.uemail, nickname: uemailMap.get(req.query.uemail), codeMsg: 'user_exists'})
   }
   return res.json({code:0, uemail:null, codeMsg: 'non_existent_user'})
+})
+app.post('/users/nicknames', authMiddleWare, (req, res)=> {
+  if(!Array.isArray(req.body.users)) {
+    return res.json({
+      code: 0,
+      codeMsg: 'users must be array'
+    })
+  }
+  const users = req.body.users;
+  const hasInvalidOrUnknownEmails = users.some(user=>{
+    return (!validator.isEmail(user) || !uemailMap.has(user))
+  })
+  if(hasInvalidOrUnknownEmails) {
+    return res.json({
+      code:0,
+      codeMsg: 'invalid/unknown users in array'
+    })
+  }
+  const nicknames = users.map(user => {
+    return {
+      uemail: user,
+      nickname: uemailMap.get(user)
+    }
+  })
+  return res.json({
+    code: 1,
+    codeMsg: 'get your contacts',
+    contacts: nicknames
+  })
 })
 
 // socket replacing POST /messages
@@ -295,7 +354,7 @@ io.use((socket, next)=> {
   const tokenHeader = socket.handshake.headers.cookie || '';
   const token = tokenHeader.match(/(?:^|;\s*)token=([^;]*)/)?.[1];
   if(!token) {
-    console.log(socket.id, ' : no token');
+    console.log('SOCK:',socket.id, ' : no token');
     socket.disconnect(true);
     return;
   }
@@ -346,11 +405,13 @@ io.on('connection', (socket)=>  {
     messages.forEach(message => {
       const timeStamp = Date.now();
       const mes_uid = socket.user._id + timeStamp + Math.floor(Math.random()*1000);
+      socket.emit('messagesToServerS',{code: 1, codeMsg: 'get s_uid', temp_uid: message.temp_uid, s_uid: mes_uid})
 
       message.timestamp = timeStamp;
       message.s_uid = mes_uid;
       message.sendPending = 0;
       message.sender = socket.user.uemail;
+      
 
       THE_MESS.set(mes_uid, message);
 
@@ -376,7 +437,7 @@ io.on('connection', (socket)=>  {
   
   socket.on('disconnect', ()=>{
     userSocketMap.delete(socket.user.uemail);
-    console.log(`${socket.user.uemail} disconnected`);
+    console.log(`SOCK: ${socket.user.uemail} disconnected`);
   })
   
 })
