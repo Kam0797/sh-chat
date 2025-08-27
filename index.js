@@ -323,7 +323,7 @@ app.post('/users/nicknames', authMiddleWare, (req, res)=> {
   const nicknames = users.map(user => {
     return {
       uemail: user,
-      nickname: uemailMap.get(user)
+      nickname: uemailMap.get(user) || user.split('@')[0]
     }
   })
   return res.json({
