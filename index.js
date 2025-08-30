@@ -226,7 +226,7 @@ app.post('/profile/nickname', authMiddleWare, async (req, res)=> {
   try {
     await User.updateOne({_id: req.user._id},{ $set: {nickname: req.body.nickname}}); // 'const nick = ' be taken out?
     loadNicknameMap();
-    return res.json({code:1, codeMsg: `nickname changed to ${req.body.nickname}`})
+    return res.json({code:1, codeMsg: `nickname changed to ${req.body.nickname}`, nickname: req.body.nickname})
   }catch (err) {
     console.log('nickname update error:', err);
     return res.json({code:0, codeMsg: 'nickname update failed'})
@@ -265,7 +265,7 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
     },{
       chatId:1,
     });
-    if (yourChatId) {
+    if (yourChatId) { // add support for groups too
       return res.json({code:2, codeMsg: 'chat exists',chatId: yourChatId })
     }
 
