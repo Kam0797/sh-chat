@@ -292,7 +292,7 @@ app.get('/chats', authMiddleWare, async (req, res)=> {
   const chatId = req.query.chatId; // optional
   const query = { chatId: chatId?ChatId:{$exists: true}, members: {$in: [req.user.uemail]} }
   const chats = await ChatId.find(query, {_id:0,__v:0});
-  console.log('get-/chats',JSON.stringify(chats,null,1))
+  // console.log('get-/chats',JSON.stringify(chats,null,1))
   return res.json({code: 1, chats: Array.from(chats)})
 })
 
@@ -332,6 +332,13 @@ app.post('/users/nicknames', authMiddleWare, (req, res)=> {
     contacts: nicknames
   })
 })
+
+
+// docs on message DS's:
+//   THE_MESS -> Map(s_uid: message)
+//   SORTED_MESS -> Map(s_uid: Map(suid: message)) // supposed to be refs to THE_MESS elements
+//   MESS_TRACKER -> Map(s_uid: Set(member1,member2,...))
+
 
 // socket replacing POST /messages
 const server = createServer(app)
@@ -414,19 +421,22 @@ io.on('connection', (socket)=>  {
       
 
       THE_MESS.set(mes_uid, message);
+      console.log('THE_MESS set ', mes_uid);
 
       const members = chatIdMap.get(message.chatId);
       members.forEach(member => {
+        console.log('mem:',member);
         if(member != socket.user.uemail) {
           if(!SORTED_MESS.has(member)) {
-            SORTED_MESS.set(member, []);
+            SORTED_MESS.set(member, new Map());
           }
           if(!MESS_TRACKER.has(message.s_uid)) {
             MESS_TRACKER.set(message.s_uid, new Set());
           }
-          SORTED_MESS.get(member).push(THE_MESS.get(mes_uid));
+          SORTED_MESS.get(member).set(THE_MESS.get(mes_uid).s_uid, THE_MESS.get(mes_uid));
 
           MESS_TRACKER.get(message.s_uid).add(member);
+          console.log("TM?:",THE_MESS,'MT:',MESS_TRACKER,'SM:',SORTED_MESS)
         }
       })
     })
@@ -434,30 +444,41 @@ io.on('connection', (socket)=>  {
     pushMessagesToClient();
     return;
   })
+
+
+  // reliability release stuff
+  socket.on('confirmMessagesToClient',(s_uids) => {
+    const { uemail } = socket.user ;
+    console.info(`CMTC:: received${s_uids}`)
+    s_uids.forEach(s_uid => {
+      SORTED_MESS?.get(uemail)?.delete(s_uid);
+      MESS_TRACKER?.get(s_uid)?.delete(uemail);
+      if(MESS_TRACKER?.get(s_uid)?.size == 0) {
+        THE_MESS?.delete(s_uid)
+        MESS_TRACKER?.delete(s_uid) // missed earier, fixed <3
+      }
+    });
+    if(SORTED_MESS?.get(uemail)?.size === 0) {
+      SORTED_MESS?.delete(uemail);
+    }
+  })
   
   socket.on('disconnect', ()=>{
     userSocketMap.delete(socket.user.uemail);
     console.log(`SOCK: ${socket.user.uemail} disconnected`);
   })
-  
+
 })
 
 function pushMessagesToClient() {
   userSocketMap.forEach((socketId,uemail)=> {
     try {
       if(SORTED_MESS.has(uemail)) {
-        io.to(socketId).emit('messagesToClient',SORTED_MESS.get(uemail));
-        SORTED_MESS.delete(uemail);
-        console.log('sent and deleted record in SORTED_MESS for ', uemail);
-
-        // clearing up ?
-        const member = uemail;
-        MESS_TRACKER.forEach((mess, key)=> {
-          mess.delete(member);
-          if(!mess.size) {
-            THE_MESS.delete(key);
-          }
+        const messages = [...SORTED_MESS.get(uemail)].map(mes => {
+          return mes[1]
         })
+        io.to(socketId).emit('messagesToClient',messages);
+        console.info('messages sent to ',uemail,'see', messages)
       }
     }
     catch(err) {
