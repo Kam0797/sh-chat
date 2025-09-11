@@ -30,7 +30,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://localhost:${PORT}`;
 
-const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.60.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.134.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
 
 
 app.use(express.urlencoded({extended:false}));  // *1
@@ -101,7 +101,8 @@ function authMiddleWare(req,res,next) {
 // })();
 (async () => {
   try {
-    await mongoose.connect(process.env.MONGO_SH_CHAT_URI);
+    await mongoose.connect(process.env.MONGO_SH_CHAT_URI,
+      {serverSelectionTimeoutMS: 5000,});
     console.log('connected to mongodb');
     await loadIssuedAtMap();
     await loadNicknameMap();
@@ -109,7 +110,8 @@ function authMiddleWare(req,res,next) {
     console.log('caches loaded');
   }
   catch (err) {
-    console.error('mongoDB connect failed',err)
+    console.error('mongoDB connect failed::',err.message);
+    process.exit(1);
   }
 })();
 
@@ -193,8 +195,7 @@ app.post('/auth/login', async(req, res)=> {
 })
 
 
-
-  app.get('/auth/status', (req,res)=> {  // unprotected route /!\
+app.get('/auth/status', (req,res)=> {  // unprotected route /!\
     const token = req.cookies.token;
     if(!token) return res.json({code:0, codeMsg: 'unauthenticated'});
     try {
@@ -270,9 +271,12 @@ app.post('/chat/new', authMiddleWare, async(req,res)=> {
     }
 
   }
+  if(members.length > 2 && !req.body.chatName) {
+    return res.json({code:0, codeMsg: 'group requires a name'})
+  }
   const newChatId = {
     chatId: chatId,
-    chatName: '',
+    chatName: req.body.chatName,
     members: members, // make this into map - keeping as arr for no
     admin: req.user.uemail,
     mods: []
