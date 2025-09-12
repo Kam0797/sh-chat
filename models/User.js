@@ -28,7 +28,6 @@ const userSchema = mongoose.Schema({
   }
 });
 const User = mongoose.model('User', userSchema);
-export {User};
 
 const chatIdSchema = mongoose.Schema({
   chatId: {
@@ -52,9 +51,25 @@ const chatIdSchema = mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["direct", "group", "channel"]
+    enum: ["chat", "group", "channel"]
   }
 });
 
 const ChatId = mongoose.model('ChatId', chatIdSchema);
-export { ChatId };
+
+const MessageSchema = mongoose.Schema( {
+  s_uid: {
+    type: String,
+    required: true,
+    unique: true
+  } ,
+  message: {
+    type: Object,
+    required: true
+  }
+})
+const Message = mongoose.model("Message", MessageSchema);
+
+
+
+export { ChatId, User, Message };

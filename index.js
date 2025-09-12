@@ -12,15 +12,14 @@ import { Server } from 'socket.io'
 
 
 
-import { ChatId, User } from './models/User.js'
+import { ChatId, Message, User } from './models/User.js'
 import { issuedAtMap, loadIssuedAtMap } from './cache/issuedAtCache.js';
+import { THE_MESS, SORTED_MESS, MESS_TRACKER, MONGO_SAVED_MESS, restoreChats } from './utils/restoreChats.js';
 import { nicknameMap, uemailMap, chatIdMap, loadNicknameMap, loadChatIdMap } from './cache/nicknameCache.js';
 
 const app = express();
 
-let THE_MESS = new Map();
-let SORTED_MESS = new Map();
-let MESS_TRACKER = new Map();
+
 
 const PORT = process.env.PORT || 3000;
 const ENV = process.env.NODE_ENV || 'development';
@@ -58,7 +57,7 @@ async function addUser(userData) {
     
     const pwHash = await bcrypt.hash(userData.pw1,12);
     const passedUserData = {
-      uemail: userData.uemail,
+  uemail: userData.uemail,
       nickname: userData.name,
       password: pwHash,
       uemailVerified: false,
@@ -107,6 +106,7 @@ function authMiddleWare(req,res,next) {
     await loadIssuedAtMap();
     await loadNicknameMap();
     await loadChatIdMap();
+    await restoreChats(chatIdMap);
     console.log('caches loaded');
   }
   catch (err) {
@@ -413,7 +413,7 @@ io.on('connection', (socket)=>  {
       socket.emit('messagesToServer', {code:0, codeMsg: 'malformed req l316'});
       return;
     }
-    messages.forEach(message => {
+    messages.forEach(async (message) => {
       const timeStamp = Date.now();
       const mes_uid = socket.user._id + timeStamp + Math.floor(Math.random()*1000);
       socket.emit('messagesToServerS',{code: 1, codeMsg: 'get s_uid', temp_uid: message.temp_uid, s_uid: mes_uid})
@@ -425,26 +425,42 @@ io.on('connection', (socket)=>  {
       
 
       THE_MESS.set(mes_uid, message);
-      console.log('THE_MESS set ', mes_uid);
+      async function saveToMongo(mes_uid) {
+        if(!THE_MESS.has(mes_uid)) return
+        try {
+          const newMessage = {
+            s_uid: message.s_uid,
+            message: message
+          }
+          await Message.create(newMessage)
+          MONGO_SAVED_MESS.add(message.s_uid)
+          console.log('mess saved to MONGO')
+        } catch(err) {
+          console.error('Error saving mes to Mongo::',err.message)
+        }
+      }
+      setTimeout(() => saveToMongo(mes_uid),10000)
+      
 
       const members = chatIdMap.get(message.chatId);
-      members.forEach(member => {
-        console.log('mem:',member);
+
+        if(!MESS_TRACKER.has(message.s_uid)) {
+          MESS_TRACKER.set(message.s_uid, new Set());
+        }
+        members.forEach(member => {
+        // console.log('mem:',member);
         if(member != socket.user.uemail) {
           if(!SORTED_MESS.has(member)) {
             SORTED_MESS.set(member, new Map());
           }
-          if(!MESS_TRACKER.has(message.s_uid)) {
-            MESS_TRACKER.set(message.s_uid, new Set());
-          }
+
           SORTED_MESS.get(member).set(THE_MESS.get(mes_uid).s_uid, THE_MESS.get(mes_uid));
 
           MESS_TRACKER.get(message.s_uid).add(member);
-          console.log("TM?:",THE_MESS,'MT:',MESS_TRACKER,'SM:',SORTED_MESS)
         }
       })
     })
-    socket.emit('messagesToServer',{code:1, codeMsg: 'messages accepted'});
+    // socket.emit('messagesToServer',{code:1, codeMsg: 'messages accepted'});
     pushMessagesToClient();
     return;
   })
@@ -453,13 +469,22 @@ io.on('connection', (socket)=>  {
   // reliability release stuff
   socket.on('confirmMessagesToClient',(s_uids) => {
     const { uemail } = socket.user ;
-    console.info(`CMTC:: received${s_uids}`)
-    s_uids.forEach(s_uid => {
+    console.info(`CMTC:: received ${s_uids}`)
+    s_uids.forEach(async s_uid => {
       SORTED_MESS?.get(uemail)?.delete(s_uid);
       MESS_TRACKER?.get(s_uid)?.delete(uemail);
       if(MESS_TRACKER?.get(s_uid)?.size == 0) {
         THE_MESS?.delete(s_uid)
         MESS_TRACKER?.delete(s_uid) // missed earier, fixed <3
+        try{
+          if(MONGO_SAVED_MESS.has(s_uid)) {
+            await Message.findOneAndDelete({s_uid: s_uid});
+            MONGO_SAVED_MESS.delete(s_uid)
+            console.log('mess deleted from MONGO')
+          }
+        } catch (err) {
+          console.log('failed to delete from mongo')
+        }
       }
     });
     if(SORTED_MESS?.get(uemail)?.size === 0) {
@@ -482,7 +507,7 @@ function pushMessagesToClient() {
           return mes[1]
         })
         io.to(socketId).emit('messagesToClient',messages);
-        console.info('messages sent to ',uemail,'see', messages)
+        // console.info('messages sent to ',uemail,'see', messages)
       }
     }
     catch(err) {
