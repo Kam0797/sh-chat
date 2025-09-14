@@ -1,7 +1,7 @@
 # Sh_chat
 ### A open-source messaging app built with MERN stack and websockets.
 
-<img src='./public/sh_chat_logo.svg' height='200' width='2000' >
+<img src='https://raw.githubusercontent.com/Kam0797/sh-chat-fe/refs/heads/main/public/sh_chat_logo.svg' height='200' width='2000' >
 
 Try it [here](https://kam0797.github.io/sh-chat-fe/)
 
@@ -18,6 +18,10 @@ Sh_chat is a messaging app built with MERN stack and webSockets.
 - MongoDB [DB]
 
 - Socket.io
+
+- Dexie.js [IndexedDB wrapper that makes life easier]
+
+- Lucide icons [saved few hours]
 
 ##### Other deps
 
