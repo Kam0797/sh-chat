@@ -19,9 +19,6 @@ Sh_chat is a messaging app built with MERN stack and webSockets.
 
 - Socket.io
 
-- Dexie.js [IndexedDB wrapper that makes life easier]
-
-- Lucide icons [saved few hours]
 
 ##### Other deps
 
