@@ -33,7 +33,7 @@ function sendEmailVerification(uemail, uemailVerificationTokensMap, host, isVeri
   ];
 
   const to = uemail;
-  const subject = isVerification? "Verify you email" : "Reset your password";
+  const subject = isVerification? "Verify your email" : "Reset your password";
   const message = isVerification? messageContents[0] : messageContents[1];
 
   sendGmail(uemail, subject, message )
