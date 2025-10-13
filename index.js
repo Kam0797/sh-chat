@@ -71,9 +71,15 @@ async function addUser(userData) {
     try {
       const newUser = await User.create(passedUserData);
       return newUser;
-    } catch (err) {
+    } 
+    catch (err) {
+      if(err.code === 11000) {
+        return { code : 'ougl'};
+      }
+      else {
       console.log("db error", err);
       return null;
+      }
     }
   } else {
     return null;
@@ -84,7 +90,7 @@ function authMiddleWare(req, res, next) {
   const token = req.cookies.token;
 
   if (!token) {
-    console.log("no tok", req.cookies);
+    // console.log("no tok", req.cookies);
     return res.status(401).json({ code: 0, codeMsg: "not signed in" });
   }
 
@@ -150,18 +156,19 @@ app.post("/auth/signup", async (req, res) => {
       // loadIssuedAtMap(); // fix this //fixed
       const newIssuedAt = await User.findOne(
         { uemail: userData.uemail },
-        { _id: 1, issuedAt: 1 }
+        { _id: 1, issuedAt: 1, nickname: 1, uemail:1 } //wtf
       );
-      issuedAtMap.set(newIssuedAt._id, newIssuedAt.issuedAt);
+      issuedAtMap.set(newIssuedAt._id.toString(), newIssuedAt.issuedAt);
       console.info("debug_IAMap:", issuedAtMap, "NIA", newIssuedAt);
-      nicknameMap.set(userData.uemail, userData.name);
+      nicknameMap.set(newIssuedAt._id.toString(), newIssuedAt.name);
+      uemailMap.set(newIssuedAt.uemail, newIssuedAt.name)
     }
     // else if(result.code == 'ougl') res.json({code:0, codeMsg: 'Existing user, go to login'})
-    req.loginEmail = req.body.uemail;
-    req.loginPw = req.body.pw1;
+    req.body.loginEmail = req.body.uemail;
+    req.body.loginPw = req.body.pw1;
     await handleLogin(req, res);
   } catch (err) {
-    console.log(err);
+    console.log('DEBUG::',err);
     res.json({ code: 0, codeMsg: "signup failed -maybe retry" });
   }
 });
@@ -212,7 +219,6 @@ app.post("/profile/nickname", authMiddleWare, async (req, res) => {
       nickname: nickname,
     });
   } catch (err) {
-    console.log("nickname update error:", err);
     return res.json({ code: 0, codeMsg: "nickname update failed" });
   }
 });
@@ -278,7 +284,6 @@ app.post("/chat/new", authMiddleWare, async (req, res) => {
     loadChatIdMap();
     return res.json({ code: 1, codeMsg: "chat created", chatId: newChatId });
   } catch (err) {
-    console.log("error::chatId/new::", err);
     return res.json({ code: 0, codeMsg: "failed, server error" });
   }
 });
@@ -290,18 +295,12 @@ app.get("/chats", authMiddleWare, async (req, res) => {
     members: { $in: [req.user.uemail] },
   };
   const chats = await ChatId.find(query, { _id: 0, __v: 0 });
-  // console.log('get-/chats',JSON.stringify(chats,null,1))
   return res.json({ code: 1, chats: Array.from(chats) });
 });
 
 app.get("/user/exists", authMiddleWare, (req, res) => {
   // req: uemail={uemail}
-  console.log(
-    "chk",
-    req.query.uemail,
-    validator.isEmail(req.query.uemail),
-    uemailMap.has(req.query.uemail)
-  );
+
   if (validator.isEmail(req.query.uemail) && uemailMap.has(req.query.uemail)) {
     return res.json({
       code: 1,
@@ -375,7 +374,7 @@ io.use((socket, next) => {
     const userData = jwt.verify(token, process.env.JWT_SECRET_KEY);
     const validIssuedAt = issuedAtMap.get(userData._id);
     if (!validIssuedAt || userData.issuedAt !== validIssuedAt) {
-      console.log(socket.id, " : Invalid token -IA");
+      console.log(socket.id, " : Invalid token -expired");
       socket.disconnect(true);
       return;
     } else if (!userData.uemailVerified) {
@@ -406,7 +405,7 @@ io.on("connection", (socket) => {
       });
       return;
     }
-    console.log("socMes:", messages);
+    // console.log("DEBUG::socMes:", messages);
     const isMalformed = messages.some((messageObj) => {
       return (
         !("chatId" in messageObj) ||
@@ -418,7 +417,7 @@ io.on("connection", (socket) => {
     });
 
     if (isMalformed) {
-      console.log("malformed req l316");
+      // console.log("malformed req l316");
       socket.emit("messagesToServer", {
         code: 0,
         codeMsg: "malformed req l316",
@@ -464,7 +463,6 @@ io.on("connection", (socket) => {
         MESS_TRACKER.set(message.s_uid, new Set());
       }
       members.forEach((member) => {
-        // console.log('mem:',member);
         if (member != socket.user.uemail) {
           if (!SORTED_MESS.has(member)) {
             SORTED_MESS.set(member, new Map());
@@ -541,11 +539,10 @@ app.get("/chat-room", authMiddleWare, (req, res) => {
   res.status(200).json({ code: 1, msg: `Hello ${nickname}!` });
 });
 
-app.get("/updateToken", authMiddleWare, (req, res) => {
+app.get("/updateToken", authMiddleWare, async (req, res) => {
   if(!req.user.uemailVerified && nicknameMap.has(req.user._id)) {
     req.body={loginEmail: req.user.uemail};
-    console.log('d22', req.body)
-    handleLogin(req,res, true);
+    await handleLogin(req,res, true);
   }
 })
 
@@ -564,13 +561,11 @@ app.get("/auth/verifyEmail", async (req, res) => {
       { new: true }
     );
     if (updatedUser) {
-      console.log('c1', updatedUser);
       nicknameMap.set(updatedUser._id, updatedUser.nickname)
       res.send(
         `<div align="center">
-          <p>Email has been verified.</p> 
-          <a href='https://kam0797.github.io/sh-chat-fe'>
-            <button>Start chatting</button>
+          <h2>Email has been verified.</h2> 
+
           </a>
           </div>`
       );

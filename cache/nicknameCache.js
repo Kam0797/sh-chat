@@ -1,6 +1,6 @@
 
 let nicknameMap = new Map();  // {_id,nickname}  //used to track email verif
-let uemailMap = new Map();   // {uemail, nickename}
+let uemailMap = new Map();   // {uemail, nickname}
 
 let chatIdMap = new Map();  // {chatId, [members]}
 import { User, ChatId } from '../models/User.js'
