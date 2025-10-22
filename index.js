@@ -530,7 +530,7 @@ function pushMessagesToClient() {
   });
 }
 
-server.listen(3000, () => {
+server.listen(PORT, () => {
   console.log("sock server running");
 });
 

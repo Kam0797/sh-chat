@@ -10,7 +10,7 @@ const host = ENV === 'production'
   ? 'https://sh-chat.onrender.com'
   : `http://${getServerIP()}:${PORT}`;
 
-const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.206.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
+const allowedOrigins = ['http://localhost:5173','https://kam0797.github.io', 'http://localhost:4173', 'http://192.168.165.94:5173'] //:5173 used for vite dev :4173 for vite preview :for LAN
 
 
 
